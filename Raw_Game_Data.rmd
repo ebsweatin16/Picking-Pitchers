@@ -1,0 +1,1097 @@
+---
+title: "Picking Pitchers ETL Process"
+author: "Eric Breton"
+date: "August 15th, 2019"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r, echo=FALSE}
+knitr::opts_chunk$set(error = TRUE)
+```
+
+
+Install and Load all Packages and Libraries.
+```{r Establish Libraries}
+
+install.packages("XML")
+install.packages("RCurl")
+install.packages("RVest")
+install.packages("reshape2")
+install.packages("tldyr")
+install.packages("data.table")
+install.packages("stringi")
+install.packages("sqldf")
+install.packages("dplyr")
+install.packages('corrplot')
+install.packages("ggplot2")
+install.packages("factoextra")
+install.packages("cowplot")
+install.packages("cluster")
+install.packages("NbClust")
+install.packages("Lahman")
+
+library(NbClust)
+library(cluster)
+library(cowplot)
+library(factoextra)
+library(corrplot)
+library(ggplot2)
+library(XML)
+library(RCurl)
+library(rvest)
+library(dplyr)
+library(reshape2)
+library(data.table)
+library(stringi)
+library(sqldf)
+library (lattice)
+library(ggplot2)
+library(tidyverse)
+library(ggpubr)
+library(rlist)
+library(lahman)
+library(knitr)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+```
+
+
+```{r Bring in Baseball Data}
+setwd("C:/Users/ebret/Desktop/Practicum Part 2")
+p<-fread("Pitchers.csv",stringsAsFactors = FALSE)
+#head(p)
+# aggregate data by player
+agg_p<-sqldf('
+select ID,player,count(player) games,
+sum(IP) IP,	sum(H) H,	sum(R) R,	sum(ER) ER,	sum(BB) BB,	sum(SO) SO,	sum(HR) HR,	sum(UER) UER,	sum(Pit) Pit,	sum(Str) Str,	sum(GSc) GSc,	sum(IR) IR,	sum(BF) BF,	sum(AB) AB,	sum([2B]) DBL,	sum([3B]) TPL,	sum(IBB) IBB,	sum(HBP) HBP,	sum(SH) SH,	sum(SF) SF,	sum(GDP) GDP,	sum(SB) SB,	sum(CS) CS,	sum(PO) PO,	sum(BK) BK,	sum(WP) WP
+from p group by ID,player')
+agg_by9<- agg_p
+#calculate per 9 values for each metric
+agg_by9<- agg_by9%>% mutate(Hper9=agg_p$H/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(Rper9=agg_p$R/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(ERA=agg_p$ER/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(BBper9=agg_p$BB/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(Kper9=agg_p$SO/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(HRper9=agg_p$HR/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(UERper9=agg_p$UER/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(Pper9=agg_p$Pit/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(Sper9=agg_p$Str/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(GSper9=agg_p$GS/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(vper9=agg_p$IR/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(BFper9=agg_p$BF/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(ABper9=agg_p$AB/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(DBLper9=agg_p$DBL/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(TPLper9=agg_p$TPL/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(IBBper9=agg_p$IBB/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(HBPper9=agg_p$HBP/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(SHper9=agg_p$SH/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(SFper9=agg_p$SF/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(GDPper9=agg_p$GDP/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(SBper9=agg_p$SB/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(CSper9=agg_p$CS/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(POper9=agg_p$PO/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(BKper9=agg_p$WP/agg_p$IP*9)
+agg_by9<- agg_by9%>% mutate(WPper9=agg_p$WP/agg_p$IP*9)
+
+# would like to see summary stats on the number of games pitched by each pitcher
+summary(agg_by9$games)
+#   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#  1.000   1.000   2.000   4.557   4.000  94.000 
+#Based on this I will use 5 as my minimum number of games to be eligible
+
+game_data<-sqldf('select *from agg_by9 where games >4')
+#head(game_data)
+#Use nrow to calculate how many pitchers my dataset will contain
+nrow(game_data)
+#   88
+#using sum to calculate how many games this data will represent
+sum(game_data$games)
+gd<-game_data
+# head(gd)
+# str(gd)
+#Store Game Data
+#write_csv(gd,"game_data.csv")
+# 1255
+
+```
+
+
+
+
+
+
+
+
+```{r Histograms}
+hist(gd$Hper9,main="Hits Per 9 Innings",xlab="Hits/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$Rper9,main="Runs Per 9 Innings",xlab="Runs/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$ERA,main="ERA",xlab="Earned Runs/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$BBper9,main="Walks Per 9 Innings",xlab="Walks/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$Kper9,main="Ks Per 9 Innings",xlab="Ks/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$HRper9,main="Homers Per 9 Innings",xlab="Homers/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$UERper9,main="UER Per 9 Innings",xlab="UER/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$Pper9,main="Pitches Per 9 Innings",xlab="Pitches /Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$Sper9,main="Strikes Per 9 Innings",xlab="Strikes/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$GSper9,main="GS Per 9 Innings",xlab="GS/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$BFper9,main="IR Per 9 Innings",xlab="BF/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$ABper9,main="At Bats Per 9 Innings",xlab="At Bats/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$DBLper9,main="Doubles Bats Per 9 Innings",xlab="At Bats/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$TPLper9,main="Triples Bats Per 9 Innings",xlab="At Bats/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$IBBper9,main="Intentionals Walks Bats Per 9 Innings",xlab="At Bats/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$HBPper9,main="HBP Bats Per 9 Innings",xlab="HBP Bats/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$SHper9,main="Sac Bunts Per 9 Innings",xlab="SH/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$SFper9,main="Sac Flies Bats Per 9 Innings",xlab="Sac Flies/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$GDPper9,main="GB DPS Per 9 Innings",xlab="GB DPS/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$SBper9,main="Stolen bases Per 9 Innings",xlab="Stolen bases/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$CSper9,main="Caught Stealing Per 9 Innings",xlab="Caught Stealing/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$POper9,main="Pickoffs Per 9 Innings",xlab="Pickoffs/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# hist(gd$BKper9,main="Balks Per 9 Innings",xlab="Balks/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+
+
+
+```
+
+```{r Box Plots}
+boxplot(gd$Hper9,main="Hits Per 9 Innings",xlab="Hits/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$Rper9,main="Runs Per 9 Innings",xlab="Runs/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$ERA,main="ERA",xlab="Earned Runs/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$BBper9,main="Walks Per 9 Innings",xlab="Walks/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$Kper9,main="Ks Per 9 Innings",xlab="Ks/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$HRper9,main="Homers Per 9 Innings",xlab="Homers/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$UERper9,main="UER Per 9 Innings",xlab="UER/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$Pper9,main="Pitches Per 9 Innings",xlab="Pitches /Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$Sper9,main="Strikes Per 9 Innings",xlab="Strikes/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$GSper9,main="GS Per 9 Innings",xlab="GS/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$BFper9,main="IR Per 9 Innings",xlab="BF/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$ABper9,main="At Bats Per 9 Innings",xlab="At Bats/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$DBLper9,main="Doubles Bats Per 9 Innings",xlab="At Bats/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$TPLper9,main="Triples Bats Per 9 Innings",xlab="At Bats/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$IBBper9,main="Intentionals Walks Bats Per 9 Innings",xlab="At Bats/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$HBPper9,main="HBP Bats Per 9 Innings",xlab="HBP Bats/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$SHper9,main="Sac Bunts Per 9 Innings",xlab="SH/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$SFper9,main="Sac Flies Bats Per 9 Innings",xlab="Sac Flies/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$GDPper9,main="GB DPS Per 9 Innings",xlab="GB DPS/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$SBper9,main="Stolen bases Per 9 Innings",xlab="Stolen bases/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$CSper9,main="Caught Stealing Per 9 Innings",xlab="Caught Stealing/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$POper9,main="Pickoffs Per 9 Innings",xlab="Pickoffs/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# boxplot(gd$BKper9,main="Balks Per 9 Innings",xlab="Balks/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+
+
+
+```
+
+```{r Density Plots}
+ggdensity(gd$Hper9,main="Hits Per 9 Innings",xlab="Hits/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$Rper9,main="Runs Per 9 Innings",xlab="Runs/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$ERA,main="ERA",xlab="Earned Runs/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$BBper9,main="Walks Per 9 Innings",xlab="Walks/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$Kper9,main="Ks Per 9 Innings",xlab="Ks/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$HRper9,main="Homers Per 9 Innings",xlab="Homers/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$UERper9,main="UER Per 9 Innings",xlab="UER/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$Pper9,main="Pitches Per 9 Innings",xlab="Pitches /Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$Sper9,main="Strikes Per 9 Innings",xlab="Strikes/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$GSper9,main="GS Per 9 Innings",xlab="GS/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$BFper9,main="BF Per 9 Innings",xlab="BF/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$ABper9,main="At Bats Per 9 Innings",xlab="At Bats/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$DBLper9,main="Doubles Bats Per 9 Innings",xlab="At Bats/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$TPLper9,main="Triples Bats Per 9 Innings",xlab="At Bats/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$IBBper9,main="Intentionals Walks Bats Per 9 Innings",xlab="At Bats/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$HBPper9,main="HBP Bats Per 9 Innings",xlab="HBP Bats/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$SHper9,main="Sac Bunts Per 9 Innings",xlab="SH/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$SFper9,main="Sac Flies Bats Per 9 Innings",xlab="Sac Flies/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$GDPper9,main="GB DPS Per 9 Innings",xlab="GB DPS/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$SBper9,main="Stolen bases Per 9 Innings",xlab="Stolen bases/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$CSper9,main="Caught Stealing Per 9 Innings",xlab="Caught Stealing/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$POper9,main="Pickoffs Per 9 Innings",xlab="Pickoffs/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+# ggdensity(gd$BKper9,main="Balks Per 9 Innings",xlab="Balks/Innings*9",ylab="PITCHERS",breaks=15,col="#33006F")
+
+```
+
+
+```{r Match Ids for brooks and stats pull}
+#Different baseball sources have different ids this will allow me to stay consistent throughout my analysis
+ids<-fread("http://www.crunchtimebaseball.com/master.csv",stringsAsFactors = FALSE)
+brev<-sqldf('
+select player,id,count(player) games from p group by player,id')
+
+trimmed<-sqldf('
+select id  from brev where games>4')
+nrow(trimmed)
+bb<-sqldf('select id,mlb_id,lahman_id from trimmed left join ids on ids.bref_id=trimmed.id')
+#(bb)
+# The following lds dld not have corresponding brooks lds
+# cookaa01
+# zitoba01
+# reynogr01
+# moyerja01
+# marquja01
+# garlajo01
+# millwke01
+# hernali01
+# lillyte01
+# hudsoti01
+bb <- tibble::rowid_to_column(bb, "ROW_id")
+#filter out pitchers who do not have pitch fx data due to being too old. Thought Moyer would be only pitcher to throw in both dead ball era and pitch f/x era
+bb<-filter(bb,mlb_id>'0')
+##write.csv(bb,file="Pitchers_Crosswalked.csv")
+#head(bb)
+#nrow(bb)
+#78
+```
+
+```{r corrplots}
+gd_no_p<-select(gd,-(1:28),-40)
+# head(gd_no_p)
+corplotdata<-sqldf('select Hper9,Rper9, ERA,BBper9,Kper9,HRper9,UERper9,Pper9,ABper9,DBLper9,TPLper9,IBBper9,HBPper9,GDPper9 from gd_no_p')
+corrplot(cor(corplotdata), type = "upper", method = "color", tl.cex = .5)
+
+cor(gd_no_p)
+```
+
+
+```{r Pull Pitcher}
+url<-"http://www.brooksbaseball.net/tabs.php?player=407822&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2"
+#Dynamically Grab Pitcher by the URL
+start<-as.numeric((gregexpr(pattern ='r=',url))+2
+end<-as.numeric((gregexpr(pattern ='&t',url))-1
+ld<-substr(url,start,end)
+#ld
+name<-filter(bb,mlb_ld==ld)
+name<-select(name,ld)
+
+#name
+#pulls my year so that i can add it, data set does not denote year in columns
+year<-substr(url,start,end)
+pitching.CO <- read_html(url)
+#gets my data into a table form
+fx["Pitcher"]<-name %>% data.frame(read_html(url) %>% html_nodes('table') %>% html_table(fill=TRUE))
+
+# View(fx)
+```
+
+```{r Retrieve Pitch F/x description data from pitchers}
+haranaa01_fx <-data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=421685&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+whiteal01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=502229&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+woodal02_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=622072&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+cashnan01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=488768&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+senzaan01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=622608&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+anderbr04_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=474463&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+arroybr01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=276520&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+bettich01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=518452&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+billich01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=451532&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+mortoch02_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=450203&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+anderch01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=502624&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+rusinch01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=543734&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+bergmch01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=548357&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+friedch01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=543184&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+kershcl01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=477132&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+richacl01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=453385&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+hamelco01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=430935&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+harenda01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=429717&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+haleda02_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=571735&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+pomerdr01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=519141&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+butleed01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=572750&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+volqued01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=450172&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+jacksed01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=429719&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+stulter01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=445590&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+rogeres01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=469134&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+moralfr01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=462985&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+marquge01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=608566&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+kurodhi01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=493133&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+ryuhy01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=547943&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+kenneia01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=453178&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+peavyja01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=408241&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+hammeja01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=434628&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+francje01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=433585&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+hoffmje02_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=656546&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+lockeje01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=502046&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+samarje01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=502188&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+guthrje01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=425386&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+chacijh01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=468504&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+cuetojo01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=456501&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+grayjo02_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=592351&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+niesejo01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=477003&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+sanchjo01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=456043&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+lylesjo01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=543475&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+zimmejo02_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=519455&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+rosajo01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=407822&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+collmjo01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=518567&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+nicasju01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=504379&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+teherju01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=527054&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+maedake01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=628317&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+freelky01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=607536&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+hendrky01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=543294&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+kendrky01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=452718&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+lohseky01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=346798&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+bumgama01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=518516&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+latosma01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=502009&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+cainma01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=430912&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+scherma01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=453286&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+corbipa01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=571578&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+maholpa01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=430904&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+lambepe01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=663567&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+nolasri01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=445060&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+rayro02_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=592662&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+vogelry01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=285064&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+strasst01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=544931&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+linceti01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=453311&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+cahiltr01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=502239&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+anderty01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=542881&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+chatwty01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=543022&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+matzety01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=554431&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+rossty01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=475115&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+jimenub01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=434622&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+leblawa01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=453281&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+mileywa01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=489119&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+buehlwa01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=621111&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+rodriwa01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=434643&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+flandyo01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=456071&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+petityu01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=433589&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+greinza01_fx <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=425844&time=&startDate=03/30/2007&endDate=07/18/2019&s_type=2")%>% html_nodes('table') %>% html_table(fill=TRUE))
+
+```
+
+```{r Add Pitcher id to fx descritpion data}
+haranaa01_fx["Pitcher"]<- 'haranaa01'
+whiteal01_fx["Pitcher"]<- 'whiteal01'
+woodal02_fx["Pitcher"]<- 'woodal02'
+cashnan01_fx["Pitcher"]<- 'cashnan01'
+senzaan01_fx["Pitcher"]<- 'senzaan01'
+anderbr04_fx["Pitcher"]<- 'anderbr04'
+arroybr01_fx["Pitcher"]<- 'arroybr01'
+bettich01_fx["Pitcher"]<- 'bettich01'
+billich01_fx["Pitcher"]<- 'billich01'
+mortoch02_fx["Pitcher"]<- 'mortoch02'
+anderch01_fx["Pitcher"]<- 'anderch01'
+rusinch01_fx["Pitcher"]<- 'rusinch01'
+bergmch01_fx["Pitcher"]<- 'bergmch01'
+friedch01_fx["Pitcher"]<- 'friedch01'
+kershcl01_fx["Pitcher"]<- 'kershcl01'
+richacl01_fx["Pitcher"]<- 'richacl01'
+hamelco01_fx["Pitcher"]<- 'hamelco01'
+harenda01_fx["Pitcher"]<- 'harenda01'
+haleda02_fx["Pitcher"]<- 'haleda02'
+pomerdr01_fx["Pitcher"]<- 'pomerdr01'
+butleed01_fx["Pitcher"]<- 'butleed01'
+volqued01_fx["Pitcher"]<- 'volqued01'
+jacksed01_fx["Pitcher"]<- 'jacksed01'
+stulter01_fx["Pitcher"]<- 'stulter01'
+rogeres01_fx["Pitcher"]<- 'rogeres01'
+moralfr01_fx["Pitcher"]<- 'moralfr01'
+marquge01_fx["Pitcher"]<- 'marquge01'
+kurodhi01_fx["Pitcher"]<- 'kurodhi01'
+ryuhy01_fx["Pitcher"]<- 'ryuhy01'
+kenneia01_fx["Pitcher"]<- 'kenneia01'
+peavyja01_fx["Pitcher"]<- 'peavyja01'
+hammeja01_fx["Pitcher"]<- 'hammeja01'
+francje01_fx["Pitcher"]<- 'francje01'
+hoffmje02_fx["Pitcher"]<- 'hoffmje02'
+lockeje01_fx["Pitcher"]<- 'lockeje01'
+samarje01_fx["Pitcher"]<- 'samarje01'
+guthrje01_fx["Pitcher"]<- 'guthrje01'
+chacijh01_fx["Pitcher"]<- 'chacijh01'
+cuetojo01_fx["Pitcher"]<- 'cuetojo01'
+grayjo02_fx["Pitcher"]<- 'grayjo02'
+niesejo01_fx["Pitcher"]<- 'niesejo01'
+sanchjo01_fx["Pitcher"]<- 'sanchjo01'
+lylesjo01_fx["Pitcher"]<- 'lylesjo01'
+zimmejo02_fx["Pitcher"]<- 'zimmejo02'
+rosajo01_fx["Pitcher"]<- 'rosajo01'
+collmjo01_fx["Pitcher"]<- 'collmjo01'
+nicasju01_fx["Pitcher"]<- 'nicasju01'
+teherju01_fx["Pitcher"]<- 'teherju01'
+maedake01_fx["Pitcher"]<- 'maedake01'
+freelky01_fx["Pitcher"]<- 'freelky01'
+hendrky01_fx["Pitcher"]<- 'hendrky01'
+kendrky01_fx["Pitcher"]<- 'kendrky01'
+lohseky01_fx["Pitcher"]<- 'lohseky01'
+bumgama01_fx["Pitcher"]<- 'bumgama01'
+latosma01_fx["Pitcher"]<- 'latosma01'
+cainma01_fx["Pitcher"]<- 'cainma01'
+scherma01_fx["Pitcher"]<- 'scherma01'
+corbipa01_fx["Pitcher"]<- 'corbipa01'
+maholpa01_fx["Pitcher"]<- 'maholpa01'
+lambepe01_fx["Pitcher"]<- 'lambepe01'
+nolasri01_fx["Pitcher"]<- 'nolasri01'
+rayro02_fx["Pitcher"]<- 'rayro02'
+vogelry01_fx["Pitcher"]<- 'vogelry01'
+strasst01_fx["Pitcher"]<- 'strasst01'
+linceti01_fx["Pitcher"]<- 'linceti01'
+cahiltr01_fx["Pitcher"]<- 'cahiltr01'
+anderty01_fx["Pitcher"]<- 'anderty01'
+chatwty01_fx["Pitcher"]<- 'chatwty01'
+matzety01_fx["Pitcher"]<- 'matzety01'
+rossty01_fx["Pitcher"]<- 'rossty01'
+jimenub01_fx["Pitcher"]<- 'jimenub01'
+leblawa01_fx["Pitcher"]<- 'leblawa01'
+mileywa01_fx["Pitcher"]<- 'mileywa01'
+buehlwa01_fx["Pitcher"]<- 'buehlwa01'
+rodriwa01_fx["Pitcher"]<- 'rodriwa01'
+flandyo01_fx["Pitcher"]<- 'flandyo01'
+petityu01_fx["Pitcher"]<- 'petityu01'
+greinza01_fx["Pitcher"]<- 'greinza01'
+```
+
+```{r Union Pitcher Dexcription Data Frames into one Master Table}
+
+pitch_fx<-sqldf('
+select * from haranaa01_fx union all
+select * from whiteal01_fx union all
+select * from woodal02_fx union all
+select * from cashnan01_fx union all
+select * from senzaan01_fx union all
+select * from anderbr04_fx union all
+select * from arroybr01_fx union all
+select * from bettich01_fx union all
+select * from billich01_fx union all
+select * from mortoch02_fx union all
+select * from anderch01_fx union all
+select * from rusinch01_fx union all
+select * from bergmch01_fx union all
+select * from friedch01_fx union all
+select * from kershcl01_fx union all
+select * from richacl01_fx union all
+select * from hamelco01_fx union all
+select * from harenda01_fx union all
+select * from haleda02_fx union all
+select * from pomerdr01_fx union all
+select * from butleed01_fx union all
+select * from volqued01_fx union all
+select * from jacksed01_fx union all
+select * from stulter01_fx union all
+select * from rogeres01_fx union all
+select * from moralfr01_fx union all
+select * from marquge01_fx union all
+select * from kurodhi01_fx union all
+select * from ryuhy01_fx union all
+select * from kenneia01_fx union all
+select * from peavyja01_fx union all
+select * from hammeja01_fx union all
+select * from francje01_fx union all
+select * from hoffmje02_fx union all
+select * from lockeje01_fx union all
+select * from samarje01_fx union all
+select * from guthrje01_fx union all
+select * from chacijh01_fx union all
+select * from cuetojo01_fx union all
+select * from grayjo02_fx union all
+select * from niesejo01_fx union all
+select * from sanchjo01_fx union all
+select * from lylesjo01_fx union all
+select * from zimmejo02_fx union all
+select * from rosajo01_fx union all
+select * from collmjo01_fx union all
+select * from nicasju01_fx union all
+select * from teherju01_fx union all
+select * from maedake01_fx union all
+select * from freelky01_fx union all
+select * from hendrky01_fx union all
+select * from kendrky01_fx union all
+select * from lohseky01_fx union all
+select * from bumgama01_fx union all
+select * from latosma01_fx union all
+select * from cainma01_fx union all
+select * from scherma01_fx union all
+select * from corbipa01_fx union all
+select * from maholpa01_fx union all
+select * from lambepe01_fx union all
+select * from nolasri01_fx union all
+select * from rayro02_fx union all
+select * from vogelry01_fx union all
+select * from strasst01_fx union all
+select * from linceti01_fx union all
+select * from cahiltr01_fx union all
+select * from anderty01_fx union all
+select * from chatwty01_fx union all
+select * from matzety01_fx union all
+select * from rossty01_fx union all
+select * from jimenub01_fx union all
+select * from leblawa01_fx union all
+select * from mileywa01_fx union all
+select * from buehlwa01_fx union all
+select * from rodriwa01_fx union all
+select * from flandyo01_fx union all
+select * from petityu01_fx union all
+select * from greinza01_fx ')
+
+#View(pitch_fx)
+#Noticed Na rows will omit them
+pitch_fx<-sqldf('select * from pitch_fx where "Pitch.Type"<>"NA"')
+#clean up names
+names(pitch_fx)<-c("pitch_type","times_thrown","perc_thrown","velocity","h_mvmt","v_mvmt","h_rel","v_rel","pitcher")
+# View(pitch_fx)
+# #write.csv(pitch_fx,file ="pitch_fx2.csv")
+```
+
+
+
+```{r pull fx out comes}
+haranaa01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=421685&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+whiteal01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=502229&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+woodal02_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=622072&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+cashnan01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=488768&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+senzaan01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=622608&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+anderbr04_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=474463&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+arroybr01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=276520&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+bettich01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=518452&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+billich01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=451532&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+mortoch02_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=450203&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+anderch01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=502624&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+rusinch01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=543734&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+bergmch01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=548357&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+friedch01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=543184&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+kershcl01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=477132&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+richacl01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=453385&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+hamelco01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=430935&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+harenda01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=429717&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+haleda02_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=571735&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+pomerdr01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=519141&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+butleed01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=572750&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+volqued01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=450172&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+jacksed01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=429719&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+stulter01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=445590&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+rogeres01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=469134&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+moralfr01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=462985&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+marquge01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=608566&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+kurodhi01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=493133&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+ryuhy01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=547943&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+kenneia01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=453178&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+peavyja01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=408241&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+hammeja01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=434628&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+francje01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=433585&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+hoffmje02_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=656546&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+lockeje01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=502046&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+samarje01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=502188&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+guthrje01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=425386&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+chacijh01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=468504&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+cuetojo01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=456501&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+grayjo02_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=592351&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+niesejo01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=477003&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+sanchjo01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=456043&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+lylesjo01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=543475&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+zimmejo02_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=519455&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+rosajo01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=407822&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+collmjo01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=518567&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+nicasju01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=504379&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+teherju01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=527054&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+maedake01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=628317&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+freelky01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=607536&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+hendrky01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=543294&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+kendrky01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=452718&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+lohseky01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=346798&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+bumgama01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=518516&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+latosma01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=502009&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+cainma01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=430912&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+scherma01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=453286&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+corbipa01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=571578&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+maholpa01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=430904&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+lambepe01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=663567&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+nolasri01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=445060&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+rayro02_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=592662&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+vogelry01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=285064&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+strasst01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=544931&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+linceti01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=453311&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+cahiltr01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=502239&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+anderty01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=542881&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+chatwty01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=543022&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+matzety01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=554431&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+rossty01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=475115&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+jimenub01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=434622&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+leblawa01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=453281&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+mileywa01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=489119&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+buehlwa01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=621111&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+rodriwa01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=434643&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+flandyo01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=456071&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+petityu01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=433589&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+greinza01_fxout <- data.frame(read_html("http://www.brooksbaseball.net/tabs.php?player=425844&p_hand=-1&ppos=-1&cn=200&gFilt=&time=month&minmax=ci&var=po&s_type=2&startDate=03/30/2007&endDate=07/18/2019&balls=-1&strikes=-1&b_hand=-1")%>% html_nodes('table') %>% html_table(fill=TRUE))
+```
+
+
+```{r Add Pitcher id to outcomes}
+haranaa01_fxout["Pitcher"]<- 'haranaa01'
+whiteal01_fxout["Pitcher"]<- 'whiteal01'
+woodal02_fxout["Pitcher"]<- 'woodal02'
+cashnan01_fxout["Pitcher"]<- 'cashnan01'
+senzaan01_fxout["Pitcher"]<- 'senzaan01'
+anderbr04_fxout["Pitcher"]<- 'anderbr04'
+arroybr01_fxout["Pitcher"]<- 'arroybr01'
+bettich01_fxout["Pitcher"]<- 'bettich01'
+billich01_fxout["Pitcher"]<- 'billich01'
+mortoch02_fxout["Pitcher"]<- 'mortoch02'
+anderch01_fxout["Pitcher"]<- 'anderch01'
+rusinch01_fxout["Pitcher"]<- 'rusinch01'
+bergmch01_fxout["Pitcher"]<- 'bergmch01'
+friedch01_fxout["Pitcher"]<- 'friedch01'
+kershcl01_fxout["Pitcher"]<- 'kershcl01'
+richacl01_fxout["Pitcher"]<- 'richacl01'
+hamelco01_fxout["Pitcher"]<- 'hamelco01'
+harenda01_fxout["Pitcher"]<- 'harenda01'
+haleda02_fxout["Pitcher"]<- 'haleda02'
+pomerdr01_fxout["Pitcher"]<- 'pomerdr01'
+butleed01_fxout["Pitcher"]<- 'butleed01'
+volqued01_fxout["Pitcher"]<- 'volqued01'
+jacksed01_fxout["Pitcher"]<- 'jacksed01'
+stulter01_fxout["Pitcher"]<- 'stulter01'
+rogeres01_fxout["Pitcher"]<- 'rogeres01'
+moralfr01_fxout["Pitcher"]<- 'moralfr01'
+marquge01_fxout["Pitcher"]<- 'marquge01'
+kurodhi01_fxout["Pitcher"]<- 'kurodhi01'
+ryuhy01_fxout["Pitcher"]<- 'ryuhy01'
+kenneia01_fxout["Pitcher"]<- 'kenneia01'
+peavyja01_fxout["Pitcher"]<- 'peavyja01'
+hammeja01_fxout["Pitcher"]<- 'hammeja01'
+francje01_fxout["Pitcher"]<- 'francje01'
+hoffmje02_fxout["Pitcher"]<- 'hoffmje02'
+lockeje01_fxout["Pitcher"]<- 'lockeje01'
+samarje01_fxout["Pitcher"]<- 'samarje01'
+guthrje01_fxout["Pitcher"]<- 'guthrje01'
+chacijh01_fxout["Pitcher"]<- 'chacijh01'
+cuetojo01_fxout["Pitcher"]<- 'cuetojo01'
+grayjo02_fxout["Pitcher"]<- 'grayjo02'
+niesejo01_fxout["Pitcher"]<- 'niesejo01'
+sanchjo01_fxout["Pitcher"]<- 'sanchjo01'
+lylesjo01_fxout["Pitcher"]<- 'lylesjo01'
+zimmejo02_fxout["Pitcher"]<- 'zimmejo02'
+rosajo01_fxout["Pitcher"]<- 'rosajo01'
+collmjo01_fxout["Pitcher"]<- 'collmjo01'
+nicasju01_fxout["Pitcher"]<- 'nicasju01'
+teherju01_fxout["Pitcher"]<- 'teherju01'
+maedake01_fxout["Pitcher"]<- 'maedake01'
+freelky01_fxout["Pitcher"]<- 'freelky01'
+hendrky01_fxout["Pitcher"]<- 'hendrky01'
+kendrky01_fxout["Pitcher"]<- 'kendrky01'
+lohseky01_fxout["Pitcher"]<- 'lohseky01'
+bumgama01_fxout["Pitcher"]<- 'bumgama01'
+latosma01_fxout["Pitcher"]<- 'latosma01'
+cainma01_fxout["Pitcher"]<- 'cainma01'
+scherma01_fxout["Pitcher"]<- 'scherma01'
+corbipa01_fxout["Pitcher"]<- 'corbipa01'
+maholpa01_fxout["Pitcher"]<- 'maholpa01'
+lambepe01_fxout["Pitcher"]<- 'lambepe01'
+nolasri01_fxout["Pitcher"]<- 'nolasri01'
+rayro02_fxout["Pitcher"]<- 'rayro02'
+vogelry01_fxout["Pitcher"]<- 'vogelry01'
+strasst01_fxout["Pitcher"]<- 'strasst01'
+linceti01_fxout["Pitcher"]<- 'linceti01'
+cahiltr01_fxout["Pitcher"]<- 'cahiltr01'
+anderty01_fxout["Pitcher"]<- 'anderty01'
+chatwty01_fxout["Pitcher"]<- 'chatwty01'
+matzety01_fxout["Pitcher"]<- 'matzety01'
+rossty01_fxout["Pitcher"]<- 'rossty01'
+jimenub01_fxout["Pitcher"]<- 'jimenub01'
+leblawa01_fxout["Pitcher"]<- 'leblawa01'
+mileywa01_fxout["Pitcher"]<- 'mileywa01'
+buehlwa01_fxout["Pitcher"]<- 'buehlwa01'
+rodriwa01_fxout["Pitcher"]<- 'rodriwa01'
+flandyo01_fxout["Pitcher"]<- 'flandyo01'
+petityu01_fxout["Pitcher"]<- 'petityu01'
+greinza01_fxout["Pitcher"]<- 'greinza01'
+```
+
+```{r Union Out Comes Pitcher Data Frames into one Master Table}
+
+pitch_fxout<-sqldf('
+select * from haranaa01_fxout union all
+select * from whiteal01_fxout union all
+select * from woodal02_fxout union all
+select * from cashnan01_fxout union all
+select * from senzaan01_fxout union all
+select * from anderbr04_fxout union all
+select * from arroybr01_fxout union all
+select * from bettich01_fxout union all
+select * from billich01_fxout union all
+select * from mortoch02_fxout union all
+select * from anderch01_fxout union all
+select * from rusinch01_fxout union all
+select * from bergmch01_fxout union all
+select * from friedch01_fxout union all
+select * from kershcl01_fxout union all
+select * from richacl01_fxout union all
+select * from hamelco01_fxout union all
+select * from harenda01_fxout union all
+select * from haleda02_fxout union all
+select * from pomerdr01_fxout union all
+select * from butleed01_fxout union all
+select * from volqued01_fxout union all
+select * from jacksed01_fxout union all
+select * from stulter01_fxout union all
+select * from rogeres01_fxout union all
+select * from moralfr01_fxout union all
+select * from marquge01_fxout union all
+select * from kurodhi01_fxout union all
+select * from ryuhy01_fxout union all
+select * from kenneia01_fxout union all
+select * from peavyja01_fxout union all
+select * from hammeja01_fxout union all
+select * from francje01_fxout union all
+select * from hoffmje02_fxout union all
+select * from lockeje01_fxout union all
+select * from samarje01_fxout union all
+select * from guthrje01_fxout union all
+select * from chacijh01_fxout union all
+select * from cuetojo01_fxout union all
+select * from grayjo02_fxout union all
+select * from niesejo01_fxout union all
+select * from sanchjo01_fxout union all
+select * from lylesjo01_fxout union all
+select * from zimmejo02_fxout union all
+select * from rosajo01_fxout union all
+select * from collmjo01_fxout union all
+select * from nicasju01_fxout union all
+select * from teherju01_fxout union all
+select * from maedake01_fxout union all
+select * from freelky01_fxout union all
+select * from hendrky01_fxout union all
+select * from kendrky01_fxout union all
+select * from lohseky01_fxout union all
+select * from bumgama01_fxout union all
+select * from latosma01_fxout union all
+select * from cainma01_fxout union all
+select * from scherma01_fxout union all
+select * from corbipa01_fxout union all
+select * from maholpa01_fxout union all
+select * from lambepe01_fxout union all
+select * from nolasri01_fxout union all
+select * from rayro02_fxout union all
+select * from vogelry01_fxout union all
+select * from strasst01_fxout union all
+select * from linceti01_fxout union all
+select * from cahiltr01_fxout union all
+select * from anderty01_fxout union all
+select * from chatwty01_fxout union all
+select * from matzety01_fxout union all
+select * from rossty01_fxout union all
+select * from jimenub01_fxout union all
+select * from leblawa01_fxout union all
+select * from mileywa01_fxout union all
+select * from buehlwa01_fxout union all
+select * from rodriwa01_fxout union all
+select * from flandyo01_fxout union all
+select * from petityu01_fxout union all
+select * from greinza01_fxout ' )
+
+#View(pitch_fxout)
+#Noticed Na rows will omit them
+pitch_fxout<-sqldf('select * from pitch_fxout where "Pitch.Type"<>"NA"')
+names(pitch_fxout)<-c("pitch_type","times_thrown","ball","strike","swing","foul","whiffs","bip","gb","ld","fb","pu","hr","pitcher")
+# #write.csv(pitch_fxout,file ="pitch_fxout2.csv")
+#View(pitch_fxout)
+```
+
+```{r Join Data sets}
+
+Total_FX<-sqldf('
+select 
+pitch_fx.pitcher,pitch_fx.pitch_type,pitch_fx.times_thrown,perc_thrown,
+velocity,h_mvmt,v_mvmt,h_rel,v_rel,ball,strike,swing,foul,whiffs,
+bip,gb,ld,fb,pu,hr
+from pitch_fx left join pitch_fxout on pitch_fx.pitcher=pitch_fxout.pitcher and pitch_fx.pitch_type=pitch_fxout.pitch_type')
+# View(Total_FX)
+# #write.csv(Total_FX,file ="Total_FX2.csv")
+```
+
+```{r Convert multiple rows into columns }
+#Determine all of the different pitches for case statements
+pitches<-sqldf('select distinct(pitch_type) from Total_FX')
+# View(pitches)
+# Fourseam
+# Sinker
+# Change
+# Slider
+# Curve
+# Cutter
+# Split
+# Slow Curve
+
+pitcher_detail<-sqldf('select
+pitcher,
+--Fourseam
+max(case when pitch_type="Fourseam" then times_thrown else null end) fs_count,
+max(case when pitch_type="Fourseam" then ball else null end) fs_balls,
+max(case when pitch_type="Fourseam" then strike else null end) fs_strikes,
+max(case when pitch_type="Fourseam" then swing else null end) fs_swing,
+max(case when pitch_type="Fourseam" then foul else null end) fs_fouls,
+max(case when pitch_type="Fourseam" then whiffs else null end) fs_whiffs,
+max(case when pitch_type="Fourseam" then bip else null end) fs_bips,
+max(case when pitch_type="Fourseam" then gb else null end) fs_gbs,
+max(case when pitch_type="Fourseam" then ld else null end) fs_lds,
+max(case when pitch_type="Fourseam" then fb else null end) fs_fbs,
+max(case when pitch_type="Fourseam" then pu else null end) fs_pus,
+max(case when pitch_type="Fourseam" then hr else null end) fs_hrs,
+max(case when pitch_type="Fourseam" then perc_thrown else null end) fs_perc_thrown,
+max(case when pitch_type="Fourseam" then velocity else null end) fs_velocity,
+max(case when pitch_type="Fourseam" then h_mvmt else null end) fs_h_mvmt,
+max(case when pitch_type="Fourseam" then v_mvmt else null end) fs_v_mvmt,
+max(case when pitch_type="Fourseam" then h_rel else null end) fs_h_rel,
+max(case when pitch_type="Fourseam" then v_rel else null end) fs_v_rel,
+--Change
+max(case when pitch_type="Change" then times_thrown else null end) cu_count,
+max(case when pitch_type="Change" then ball else null end) cu_balls,
+max(case when pitch_type="Change" then strike else null end) cu_strikes,
+max(case when pitch_type="Change" then swing else null end) cu_swing,
+max(case when pitch_type="Change" then foul else null end) cu_fouls,
+max(case when pitch_type="Change" then whiffs else null end) cu_whiffs,
+max(case when pitch_type="Change" then bip else null end) cu_bips,
+max(case when pitch_type="Change" then gb else null end) cu_gbs,
+max(case when pitch_type="Change" then ld else null end) cu_lds,
+max(case when pitch_type="Change" then fb else null end) cu_fbs,
+max(case when pitch_type="Change" then pu else null end) cu_pus,
+max(case when pitch_type="Change" then hr else null end) cu_hrs,
+max(case when pitch_type="Change" then perc_thrown else null end) cu_perc_thrown,
+max(case when pitch_type="Change" then velocity else null end) cu_velocity,
+max(case when pitch_type="Change" then h_mvmt else null end) cu_h_mvmt,
+max(case when pitch_type="Change" then v_mvmt else null end) cu_v_mvmt,
+max(case when pitch_type="Change" then h_rel else null end) cu_h_rel,
+max(case when pitch_type="Change" then v_rel else null end) cu_v_rel,
+--Curve
+max(case when pitch_type="Curve" then times_thrown else null end) c_count,
+max(case when pitch_type="Curve" then ball else null end) c_balls,
+max(case when pitch_type="Curve" then strike else null end) c_strikes,
+max(case when pitch_type="Curve" then swing else null end) c_swing,
+max(case when pitch_type="Curve" then foul else null end) c_fouls,
+max(case when pitch_type="Curve" then whiffs else null end) c_whiffs,
+max(case when pitch_type="Curve" then bip else null end) c_bips,
+max(case when pitch_type="Curve" then gb else null end) c_gbs,
+max(case when pitch_type="Curve" then ld else null end) c_lds,
+max(case when pitch_type="Curve" then fb else null end) c_fbs,
+max(case when pitch_type="Curve" then pu else null end) c_pus,
+max(case when pitch_type="Curve" then hr else null end) c_hrs,
+max(case when pitch_type="Curve" then perc_thrown else null end) c_perc_thrown,
+max(case when pitch_type="Curve" then velocity else null end) c_velocity,
+max(case when pitch_type="Curve" then h_mvmt else null end) c_h_mvmt,
+max(case when pitch_type="Curve" then v_mvmt else null end) c_v_mvmt,
+max(case when pitch_type="Curve" then h_rel else null end) c_h_rel,
+max(case when pitch_type="Curve" then v_rel else null end) c_v_rel,
+--Cutter
+max(case when pitch_type="Cutter" then times_thrown else null end) cut_count,
+max(case when pitch_type="Cutter" then ball else null end) cut_balls,
+max(case when pitch_type="Cutter" then strike else null end) cut_strikes,
+max(case when pitch_type="Cutter" then swing else null end) cut_swing,
+max(case when pitch_type="Cutter" then foul else null end) cut_fouls,
+max(case when pitch_type="Cutter" then whiffs else null end) cut_whiffs,
+max(case when pitch_type="Cutter" then bip else null end) cut_bips,
+max(case when pitch_type="Cutter" then gb else null end) cut_gbs,
+max(case when pitch_type="Cutter" then ld else null end) cut_lds,
+max(case when pitch_type="Cutter" then fb else null end) cut_fbs,
+max(case when pitch_type="Cutter" then pu else null end) cut_pus,
+max(case when pitch_type="Cutter" then hr else null end) cut_hrs,
+max(case when pitch_type="Cutter" then perc_thrown else null end) cut_perc_thrown,
+max(case when pitch_type="Cutter" then velocity else null end) cut_velocity,
+max(case when pitch_type="Cutter" then h_mvmt else null end) cut_h_mvmt,
+max(case when pitch_type="Cutter" then v_mvmt else null end) cut_v_mvmt,
+max(case when pitch_type="Cutter" then h_rel else null end) cut_h_rel,
+max(case when pitch_type="Cutter" then v_rel else null end) cut_v_rel,
+--Sinker
+max(case when pitch_type="Sinker" then times_thrown else null end) sink_count,
+max(case when pitch_type="Sinker" then ball else null end) sink_balls,
+max(case when pitch_type="Sinker" then strike else null end) sink_strikes,
+max(case when pitch_type="Sinker" then swing else null end) sink_swing,
+max(case when pitch_type="Sinker" then foul else null end) sink_fouls,
+max(case when pitch_type="Sinker" then whiffs else null end) sink_whiffs,
+max(case when pitch_type="Sinker" then bip else null end) sink_bips,
+max(case when pitch_type="Sinker" then gb else null end) sink_gbs,
+max(case when pitch_type="Sinker" then ld else null end) sink_lds,
+max(case when pitch_type="Sinker" then fb else null end) sink_fbs,
+max(case when pitch_type="Sinker" then pu else null end) sink_pus,
+max(case when pitch_type="Sinker" then hr else null end) sink_hrs,
+max(case when pitch_type="Sinker" then perc_thrown else null end) sink_perc_thrown,
+max(case when pitch_type="Sinker" then velocity else null end) sink_velocity,
+max(case when pitch_type="Sinker" then h_mvmt else null end) sink_h_mvmt,
+max(case when pitch_type="Sinker" then v_mvmt else null end) sink_v_mvmt,
+max(case when pitch_type="Sinker" then h_rel else null end) sink_h_rel,
+max(case when pitch_type="Sinker" then v_rel else null end) sink_v_rel,
+--Slider
+max(case when pitch_type="Slider" then times_thrown else null end) slld_count,
+max(case when pitch_type="Slider" then ball else null end) slld_balls,
+max(case when pitch_type="Slider" then strike else null end) slld_strikes,
+max(case when pitch_type="Slider" then swing else null end) slld_swing,
+max(case when pitch_type="Slider" then foul else null end) slld_fouls,
+max(case when pitch_type="Slider" then fbs else null end) slld_fbs,
+max(case when pitch_type="Slider" then bip else null end) slld_bips,
+max(case when pitch_type="Slider" then gb else null end) slld_gbs,
+max(case when pitch_type="Slider" then ld else null end) slld_lds,
+max(case when pitch_type="Slider" then fb else null end) slld_fbs,
+max(case when pitch_type="Slider" then pu else null end) slld_pus,
+max(case when pitch_type="Slider" then hr else null end) slld_hrs,
+max(case when pitch_type="Slider" then perc_thrown else null end) slld_perc_thrown,
+max(case when pitch_type="Slider" then velocity else null end) slld_velocity,
+max(case when pitch_type="Slider" then h_mvmt else null end) slld_h_mvmt,
+max(case when pitch_type="Slider" then v_mvmt else null end) slld_v_mvmt,
+max(case when pitch_type="Slider" then h_rel else null end) slld_h_rel,
+max(case when pitch_type="Slider" then v_rel else null end) slld_v_rel,
+--Slow Curve
+max(case when pitch_type="Slow Curve" then times_thrown else null end) sc_count,
+max(case when pitch_type="Slow Curve" then ball else null end) sc_balls,
+max(case when pitch_type="Slow Curve" then strike else null end) sc_strikes,
+max(case when pitch_type="Slow Curve" then swing else null end) sc_swing,
+max(case when pitch_type="Slow Curve" then foul else null end) sc_fouls,
+max(case when pitch_type="Slow Curve" then whiffs else null end) sc_whiffs,
+max(case when pitch_type="Slow Curve" then bip else null end) sc_bips,
+max(case when pitch_type="Slow Curve" then gb else null end) sc_gbs,
+max(case when pitch_type="Slow Curve" then ld else null end) sc_lds,
+max(case when pitch_type="Slow Curve" then fb else null end) sc_fbs,
+max(case when pitch_type="Slow Curve" then pu else null end) sc_pus,
+max(case when pitch_type="Slow Curve" then hr else null end) sc_hrs,
+max(case when pitch_type="Slow Curve" then perc_thrown else null end) sc_perc_thrown,
+max(case when pitch_type="Slow Curve" then velocity else null end) sc_velocity,
+max(case when pitch_type="Slow Curve" then h_mvmt else null end) sc_h_mvmt,
+max(case when pitch_type="Slow Curve" then v_mvmt else null end) sc_v_mvmt,
+max(case when pitch_type="Slow Curve" then h_rel else null end) sc_h_rel,
+max(case when pitch_type="Slow Curve" then v_rel else null end) sc_v_rel,
+--Split
+max(case when pitch_type="Split" then times_thrown else null end) split_count,
+max(case when pitch_type="Split" then ball else null end) split_balls,
+max(case when pitch_type="Split" then strike else null end) split_strikes,
+max(case when pitch_type="Split" then swing else null end) split_swing,
+max(case when pitch_type="Split" then foul else null end) split_fouls,
+max(case when pitch_type="Split" then whiffs else null end) split_whiffs,
+max(case when pitch_type="Split" then bip else null end) split_bips,
+max(case when pitch_type="Split" then gb else null end) split_gbs,
+max(case when pitch_type="Split" then ld else null end) split_lds,
+max(case when pitch_type="Split" then fb else null end) split_fbs,
+max(case when pitch_type="Split" then pu else null end) split_pus,
+max(case when pitch_type="Split" then hr else null end) split_hrs,
+max(case when pitch_type="Split" then perc_thrown else null end) split_perc_thrown,
+max(case when pitch_type="Split" then velocity else null end) split_velocity,
+max(case when pitch_type="Split" then h_mvmt else null end) split_h_mvmt,
+max(case when pitch_type="Split" then v_mvmt else null end) split_v_mvmt,
+max(case when pitch_type="Split" then h_rel else null end) split_h_rel,
+max(case when pitch_type="Split" then v_rel else null end) split_v_rel
+from Total_FX
+group by pitcher')
+#View(new_total_fx)
+#I noticed that I had NAs in columns due to pitchers not throwing a certain type of pitch
+pitcher_detail[is.na(pitcher_detail)] <- 0
+# #write.csv(pitcher_detail,"pitcher_detail.csv")
+nrow(pitcher_detail)
+ncol(pitcher_detail)
+# View(pitcher_detail)
+```
+
+
+```{r Pitcer Career Numbers}
+
+#View(bb)
+lahman<-fread("Lahman.csv")
+#head(lahman)
+career<-sqldf('select sum(IPouts/3)C_IP,sum(H)C_H,sum(HR) C_HR, sum(BB)C_BB, sum(SO) C_SO, sum(ER) C_ER,id from bb join lahman on bb.lahman_id=lahman.playerID group by ID')
+#View(career)
+agg_p<-career
+agg_by9<- career
+#calculate per 9 values for each metric
+agg_by9<- agg_by9%>% mutate(C_Hper9=agg_p$C_H/agg_p$C_IP*9)
+agg_by9<- agg_by9%>% mutate(C_ERA=agg_p$C_ER/agg_p$C_IP*9)
+agg_by9<- agg_by9%>% mutate(C_BBper9=agg_p$C_BB/agg_p$C_IP*9)
+agg_by9<- agg_by9%>% mutate(C_Kper9=agg_p$C_SO/agg_p$C_IP*9)
+agg_by9<- agg_by9%>% mutate(C_HRper9=agg_p$C_HR/agg_p$C_IP*9)
+#write.csv(agg_by9,"Lahman_Career.csv")
+
+
+
+```
+
+```{r Join all Data sets together}
+
+Final<-sqldf(
+'select pitcher
+, fs_count, fs_balls, fs_strikes, fs_swing, fs_fouls, fs_whiffs,fs_bips,
+fs_gbs, fs_lds, fs_fbs, fs_pus, fs_hrs,fs_perc_thrown, fs_velocity, fs_h_mvmt, fs_v_mvmt,
+fs_h_rel,fs_v_rel,cu_count,cu_balls,cu_strikes,cu_swing,cu_fouls,cu_whiffs,cu_bips,cu_gbs,
+cu_lds,cu_fbs,cu_pus,cu_hrs,cu_perc_thrown,cu_velocity,cu_h_mvmt,cu_v_mvmt,cu_h_rel,
+cu_v_rel,c_count,c_balls,c_strikes,c_swing,c_fouls,c_whiffs,c_bips,c_gbs,c_lds,
+c_fbs,c_pus,c_hrs,c_perc_thrown,c_velocity,c_h_mvmt,c_v_mvmt,c_h_rel,c_v_rel,cut_count,
+cut_balls,cut_strikes,cut_swing,cut_fouls,cut_whiffs,cut_bips,cut_gbs,cut_lds,cut_fbs,cut_pus,
+cut_hrs,cut_perc_thrown,cut_velocity,cut_h_mvmt,cut_v_mvmt,cut_h_rel,cut_v_rel,sink_count,sink_balls,
+sink_strikes,sink_swing,sink_fouls,sink_whiffs,sink_bips,sink_gbs,sink_lds,sink_fbs,
+sink_pus,sink_hrs,sink_perc_thrown,sink_velocity,sink_h_mvmt,sink_v_mvmt,sink_h_rel,
+sink_v_rel,slld_count,slld_balls,slld_strikes,slld_swing,slld_fouls,slld_whiffs,slld_bips,slld_gbs,
+slld_lds,slld_fbs,slld_pus,slld_hrs,slld_perc_thrown,slld_velocity,slld_h_mvmt,slld_v_mvmt,slld_h_rel,slld_v_rel,
+sc_count,sc_balls,sc_strikes,sc_swing,sc_fouls,sc_whiffs,sc_bips,sc_gbs,sc_lds,sc_fbs,sc_pus,sc_hrs,sc_perc_thrown,
+sc_velocity,sc_h_mvmt,sc_v_mvmt,sc_h_rel,sc_v_rel,split_count,split_balls,split_strikes,split_swing,split_fouls,
+split_whiffs,split_bips,split_gbs,split_lds,split_fbs,split_pus,split_hrs,split_perc_thrown,split_velocity,split_h_mvmt,
+split_v_mvmt,split_h_rel,split_v_rel,games,Hper9,Rper9,ERA,BBper9,Kper9,HRper9,UERper9,Pper9,Sper9,
+GSper9,vper9,BFper9,ABper9,DBLper9,TPLper9,IBBper9,HBPper9,SHper9,SFper9,GDPper9,SBper9,
+CSper9,POper9,BKper9,WPper9,C_Hper9,C_ERA,C_BBper9,C_Kper9,C_HRper9
+from agg_by9 
+join pitcher_detail on agg_by9.ID=pitcher_detail.pitcher
+
+join game_data on agg_by9.ID=game_data.ID
+
+')
+
+#write.csv(Final,"final_uncleaned.csv")
+```
+
+
+
+
+```{r Clean and aggregate for total outcomes}
+#my % were coming in as characters so I just imorted it back after making a minor tweak in excel
+Final<-fread("final_uncleaned.csv",stringsAsFactors = TRUE)
+
+
+
+Final<-Final %>%
+  rename (
+coors_games=games,
+coors_Hper9=Hper9,
+coors_Rper9=Rper9,
+coors_ERA=ERA,
+coors_BBper9=BBper9,
+coors_Kper9=Kper9,
+coors_HRper9=HRper9,
+coors_UERper9=UERper9,
+coors_Pper9=Pper9,
+coors_Sper9=Sper9,
+coors_GSper9=GSper9,
+coors_vper9=vper9,
+coors_BFper9=BFper9,
+coors_ABper9=ABper9,
+coors_DBLper9=DBLper9,
+coors_TPLper9=TPLper9,
+coors_IBBper9=IBBper9,
+coors_HBPper9=HBPper9,
+coors_SHper9=SHper9,
+coors_SFper9=SFper9,
+coors_GDPper9=GDPper9,
+coors_SBper9=SBper9,
+coors_CSper9=CSper9,
+coors_POper9=POper9,
+coors_BKper9=BKper9,
+coors_WPper9=WPper9,
+career_C_Hper9=C_Hper9,
+career_C_ERA=C_ERA,
+career_C_BBper9=C_BBper9,
+career_C_Kper9=C_Kper9,
+career_C_HRper9=C_HRper9
+)
+Final<-Final %>% mutate(
+  Total_Whiffs=(((c_count*c_whiffs)+	(cu_count*cu_whiffs)+	(cut_count*cut_whiffs)+	(fs_count*fs_whiffs)+	(sc_count*sc_whiffs)+	(sink_count*sink_whiffs)+(slld_count*slld_whiffs)+(split_count*split_whiffs))
+/(c_count+cu_count+cut_count+fs_count+sc_count+sink_count+slld_count+split_count))
+                  )
+head(Final)
+
+Final<-Final%>% mutate(Total_fbs=(((c_count*c_fbs)+	(cu_count*cu_fbs)+	(cut_count*cut_fbs)+	(fs_count*fs_fbs)+	(sc_count*sc_fbs)+	(sink_count*sink_fbs)+(slld_count*slld_fbs)+(split_count*split_fbs))
+/(c_count+cu_count+cut_count+fs_count+sc_count+sink_count+slld_count+split_count)))
+
+Final<-Final%>% mutate(Total_gbs=(((c_count*c_gbs)+	(cu_count*cu_gbs)+	(cut_count*cut_gbs)+	(fs_count*fs_gbs)+	(sc_count*sc_gbs)+	(sink_count*sink_gbs)+(slld_count*slld_gbs)+(split_count*split_gbs))
+/(c_count+cu_count+cut_count+fs_count+sc_count+sink_count+slld_count+split_count)))
+
+Final<-Final%>% mutate(Total_hrs=(((c_count*c_hrs)+	(cu_count*cu_hrs)+	(cut_count*cut_hrs)+	(fs_count*fs_hrs)+	(sc_count*sc_hrs)+	(sink_count*sink_hrs)+(slld_count*slld_hrs)+(split_count*split_hrs))
+/(c_count+cu_count+cut_count+fs_count+sc_count+sink_count+slld_count+split_count)))
+
+Final<-Final%>% mutate(Total_bips=(((c_count*c_bips)+	(cu_count*cu_bips)+	(cut_count*cut_bips)+	(fs_count*fs_bips)+	(sc_count*sc_bips)+	(sink_count*sink_bips)+(slld_count*slld_bips)+(split_count*split_bips))
+/(c_count+cu_count+cut_count+fs_count+sc_count+sink_count+slld_count+split_count)))
+
+# Grab Variances
+Final<-Final%>% mutate(Variance_ERA=coors_ERA-career_C_ERA)
+Final<-Final%>% mutate(Variance_Hper9=coors_Hper9-career_C_Hper9)
+Final<-Final%>% mutate(Variance_BBper9=coors_BBper9-career_C_BBper9)
+Final<-Final%>% mutate(Variance_Kper9=coors_Kper9-career_C_Kper9)
+Final<-Final%>% mutate(Variance_HRper9=coors_HRper9-career_C_HRper9)
+#write.csv(Final,"Analysis_Dataset.csv")  
+head(Final)
+
+```
